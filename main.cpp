@@ -714,9 +714,12 @@ void commitInstruction() {
     if(typevalue.first != 's')
         rob.commit();
 }
-void flushPipeline() {   // For branch misprediction
-    
 
+void flushPipeline() {   // For branch misprediction
+    for (auto rs : reservationStations) {
+        rs.busy = false;
+    }
+    rob.flushAfter();
 }
 
 // Phase 6: Statistics / Logging
