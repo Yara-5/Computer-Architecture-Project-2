@@ -1,0 +1,10 @@
+
+LOAD  R2, 0(R0)       # R2 = M[0]
+
+CALL  func            # jump to func
+
+ADD   R4, R2, R3      # after func: uses R3 set in func
+
+func:
+ADD   R3, R2, R2      # R3 = 2 * R2
+RET                   # return

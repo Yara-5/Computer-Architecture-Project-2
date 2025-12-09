@@ -1,0 +1,8 @@
+
+LOAD  R1, 0(R0)       # R1 = M[0]
+ADD   R2, R1, R1      # R2 = 2 * R1
+
+STORE R2, 8(R0)       # M[8] = R2
+
+LOAD  R3, 8(R0)       # R3 should see M[8]
+ADD   R4, R3, R1      # R4 = R3 + R1

@@ -1,0 +1,18 @@
+
+LOAD  R1, 0(R0)        # e.g., M[0] = 5
+LOAD  R2, 1(R0)        # e.g., M[1] = 5
+
+BEQ   R1, R2, equal    # should be taken
+
+ADD   R3, R0, R0       # should be skipped
+ADD   R4, R0, R0       # should be skipped
+
+equal:
+SUB   R3, R1, R2       # R3 = R1 - R2
+
+BEQ   R3, R0, noteq    # also taken if R3 == 0
+
+ADD   R4, R1, R1       # should be skipped
+
+noteq:
+ADD   R5, R1, R2       # executes
