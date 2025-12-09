@@ -11,7 +11,8 @@ const int MEMORY_SIZE = 65536;  // 128 KB word-addressable
 
 int reserve_num[] = {2, 1, 2, 1, 4, 2, 1};
 int reserve_start[7];
-int cycles_num[] = { 6,2,1,1,2,1,12 };
+int cycles_num[] = { 2,2,1,1,2,1,12 };
+int TotalReserveStations;
 
 struct Instruction {
     char opcode;
@@ -169,7 +170,7 @@ bool canIssue(const Instruction& inst, int& i) {
         break;
     case 'm':
         i = reserve_start[6];
-        while (reserve_start[6] + reserve_num[6] > i) {
+        while (TotalReserveStations > i) {
             if (!reservationStations[i].busy) {
                 return true;
                 break;
@@ -186,26 +187,26 @@ void issueInstruction(const Instruction& inst) {
     if (!canIssue(inst, ind))
         return;
     int rbInd = rob.allocate(inst.opcode, inst.dst);
-    int16_t val1, val2;
-    if (!rob.findVal(inst.src1, val1))
+    int16_t val1 = -1, val2 = -1;
+    if (inst.src1 >= 0 && !rob.findVal(inst.src1, val1))
         val1 = registers[inst.src1];
-    if (!rob.findVal(inst.src2, val2))
+    if (inst.src2 >= 0 && !rob.findVal(inst.src2, val2))
         val2 = registers[inst.src2];
     switch (inst.opcode) {
     case 'l':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[0], inst.imm);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], -1, rbInd, cycles_num[0], inst.imm);
         break;
     case 't':
         reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[1], inst.imm);
         break;
     case 'b':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[2], inst.pc + inst.imm);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[2], inst.pc + inst.imm + 1);
         break;
     case 'c':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[3], inst.pc + inst.imm);
+        reservationStations[ind] = RSEntry(true, inst.opcode, pc, val2, -1, -1, rbInd, cycles_num[3], inst.pc + inst.imm);
         break;
     case 'r':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[3], inst.imm);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], -1, rbInd, cycles_num[3], inst.imm);
         break;
     case 'a':
         reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[4], inst.imm);
@@ -226,13 +227,74 @@ void issueInstruction(const Instruction& inst) {
 
 // Phase 3: Execute
 
-void startExecutionForReadyRS();
-void decrementExecutionTimers();
+//void startExecutionForReadyRS();
+
+void decrementExecutionTimers() {
+    for (auto rs : reservationStations) {
+        if (rs.busy && rs.executionCyclesLeft > 0 && rs.Qj == -1 && rs.Qk == -1) {
+            rs.executionCyclesLeft--;
+        }
+    }
+}
 
 
 // Phase 4: Write-back
 
-void writeBackResults();
+void writeBackResults() {
+    vector<int> ready(TotalReserveStations, -1);
+    for (int i = 0; i < TotalReserveStations;i++) {
+        if (reservationStations[i].busy && reservationStations[i].executionCyclesLeft == 0)
+            ready[i] = reservationStations[i].robIndex;
+    }
+    int index = rob.getFirst(ready);
+    for (auto st : regStatus)
+        if (st == index)
+            st = -1;
+
+    int16_t value = -1;
+    switch (reservationStations[index].op) {
+    case 'l':
+        value = dataMemory[reservationStations[index].address + reservationStations[index].Vj];
+        break;
+    case 't':
+        value = reservationStations[index].Vk;
+        rob.changeDest(reservationStations[index].robIndex, reservationStations[index].address + reservationStations[index].Vj);
+    case 'b':
+        value = (reservationStations[index].Vj == reservationStations[index].Vk);
+        rob.changeDest(reservationStations[index].robIndex, reservationStations[index].address);
+        break;
+    case 'c':
+        value = reservationStations[index].Vj + reservationStations[index].Vk;
+        rob.changeDest(reservationStations[index].robIndex, reservationStations[index].address);
+        break;
+    case 'r':
+        rob.changeDest(reservationStations[index].robIndex, reservationStations[index].Vj);
+        break;
+    case 'a':
+        value = reservationStations[index].Vj + reservationStations[index].Vk;
+        break;
+    case 's':
+        value = reservationStations[index].Vj - reservationStations[index].Vk;
+        break;
+    case 'n':
+        value = ~(reservationStations[index].Vj & reservationStations[index].Vk);
+        break;
+    case 'm':
+        value = reservationStations[index].Vj * reservationStations[index].Vk;
+        break;
+    }
+    for (auto rs : reservationStations) {
+        if (rs.Qj == index) {
+            rs.Qj = -1;
+            rs.Vj = value;
+        }
+        if (rs.Qk == index) {
+            rs.Qk = -1;
+            rs.Vk = value;
+        }
+    }
+    rob.markReady(reservationStations[index].robIndex, value);
+}
 
 
 // Phase 5: Commit
@@ -257,7 +319,7 @@ void runSimulator() {
     while (!rob.isEmpty()) {
         commitInstruction();
         writeBackResults();
-        startExecutionForReadyRS();
+        //startExecutionForReadyRS();
         decrementExecutionTimers();
         if (pc<programMemory.size())
             issueInstruction(programMemory[pc]);

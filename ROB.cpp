@@ -82,6 +82,23 @@ public:
         entries[index].destination = dest;
     }
 
+    int getFirst(vector<int> ready) {
+        vector<bool> val(ready.size(), false);
+        for (auto rd : ready)
+            if (rd >= 0)
+                val[rd] = true;
+        int index = head;
+        while (index != tail) {
+            if (val[index])
+                break;
+            index = (index + 1) % size;
+        }
+        int i = 0;
+        while (ready[i] != index)
+            i++;
+        return i;
+    }
+
     bool canCommit() const {
         return entries[head].ready;
     }
