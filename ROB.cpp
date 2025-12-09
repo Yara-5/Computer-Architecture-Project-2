@@ -83,7 +83,7 @@ public:
     }
 
     int getFirst(vector<int> ready) {
-        vector<bool> val(ready.size(), false);
+        vector<bool> val(size, false);
         for (auto rd : ready)
             if (rd >= 0)
                 val[rd] = true;
@@ -99,7 +99,18 @@ public:
         return i;
     }
 
-    bool canCommit() const {
+    int chooseStore(vector<bool> ready, int l) {
+        int index = l;
+        while (index != head) {
+            index = (index - 1) % size;
+            if (ready[index])
+                return index;
+        }
+        return l;
+    }
+
+    bool canCommit(int& front) const {
+        front = head;
         return entries[head].ready;
     }
 
