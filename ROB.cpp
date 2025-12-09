@@ -82,6 +82,14 @@ public:
         entries[index].destination = dest;
     }
 
+    int getDest(int index) {
+        return entries[index].destination;
+    }
+
+    pair<int, int> getData(int index) {
+        return make_pair(entries[index].type, entries[index].value);
+    }
+
     int getFirst(vector<int> ready) {
         vector<bool> val(size, false);
         for (auto rd : ready)
@@ -132,6 +140,17 @@ public:
             tail = (tail - 1) % size;
             entries[tail].busy = false;
         }
+    }
+
+    int compare(int i1, int i2) {
+        int index = head;
+        while (index != tail) {
+            if (index == i1)
+                return i1;
+            if (index == i2)
+                return i2;
+        }
+        return -1;
     }
 
 };

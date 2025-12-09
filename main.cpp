@@ -50,7 +50,8 @@ int regStatus[NUM_REGS];                   // ROB index producing reg (-1 if fre
 ROB rob(ROBSize);                                 // Initializing Reorder buffer
 vector<RSEntry> reservationStations;        // All RS entries
 
-vector<vector<int>> stores(ROBSize);
+vector<vector<int>> stores(ROBSize);        // 3 values: address, ready?, value         It's used to signify which datamemory items are about to be written to
+
 
 int pc = 0;                                 // Program counter
 int cycle = 0;                              // Global cycle counter
@@ -235,6 +236,7 @@ void issueInstruction(const Instruction& inst) {
         regStatus[inst.dst] = ind;
         break;
     }
+    regStatus[0] = 0;
     pc++;
 }
 
@@ -270,12 +272,19 @@ void decrementExecutionTimers() {
             bool other = false;
             int val;
             if (!canLoad(rs.robIndex, rs.address + rs.Vj, val, other))
-                rs.executionCyclesLeft = 1;
-            else
+                rs.executionCyclesLeft = 1;                 // wait another cycle
+            else {
                 if (other) {                                   // USE THE EMPTY Qk AND Vk TO GET THINGS FROM STORES
                     rs.Vk = val;
                     rs.Qk = -2;
                 }
+                else
+                {
+                    rs.executionCyclesLeft = ReadMemoryTime;
+                    rs.Vk = dataMemory[rs.Vj];
+                    rs.Qk = -2;
+                }
+            }
         }
     }
 }
@@ -297,21 +306,24 @@ void writeBackResults() {
     int16_t value = -1;
     switch (reservationStations[index].op) {
     case 'l':
-        if(reservationStations[index].Qk==-2)
-
+        if (reservationStations[index].Qk == -2) {
+            value = reservationStations[index].Vk;
+        }
         else
-
+            value = reservationStations[index].address + reservationStations[index].Vj;
         break;
     case 't':
         value = reservationStations[index].Vk;
         stores[reservationStations[index].robIndex][0] = reservationStations[index].address + reservationStations[index].Vj;
+        stores[reservationStations[index].robIndex][1] = 1;
+        stores[reservationStations[index].robIndex][2] = value;
         rob.changeDest(reservationStations[index].robIndex, stores[reservationStations[index].robIndex][0]);
     case 'b':
         value = (reservationStations[index].Vj == reservationStations[index].Vk);
         rob.changeDest(reservationStations[index].robIndex, reservationStations[index].address);
         break;
     case 'c':
-        value = reservationStations[index].Vj + reservationStations[index].Vk;
+        value = reservationStations[index].Vj + 1;
         rob.changeDest(reservationStations[index].robIndex, reservationStations[index].address);
         break;
     case 'r':
@@ -331,24 +343,85 @@ void writeBackResults() {
         break;
     }
     for (auto rs : reservationStations) {
-        if (rs.Qj == index) {
-            rs.Qj = -1;
-            rs.Vj = value;
-        }
-        if (rs.Qk == index && rs.op != 'l') {
-            rs.Qk = -1;
-            rs.Vk = value;
+        if (rs.busy) {
+            if (rs.Qj == index) {
+                rs.Qj = -1;
+                rs.Vj = value;
+            }
+            if (rs.Qk == index && rs.op != 'l') {
+                rs.Qk = -1;
+                rs.Vk = value;
+            }
         }
     }
     rob.markReady(reservationStations[index].robIndex, value);
+    if (reservationStations[index].op != 's')
+        reservationStations[index].busy = false;
 }
 
 
 // Phase 5: Commit
 
-void commitInstruction();
-void flushPipeline();   // For branch misprediction
+int commitLater = -1;            // has entries that need to be freed after data is written to the memory in WriteMemoryTime cycles
+// 2 entries: reservation stage index, when? (how many cycles left)
 
+
+void commitInstruction() {
+    int front;
+    commitLater--;
+    if (!rob.canCommit(front) || commitLater > 0)
+        return;
+    int16_t dest = rob.getDest(front);
+    if (commitLater == 0) {
+        for (int i = 0; i < TotalReserveStations; i++)
+            if (reservationStations[i].robIndex == dest)
+                reservationStations[i].busy = false;
+        rob.commit();
+    }
+    commitLater = -1;
+    pair<int, int> typevalue;
+    typevalue = rob.getData(front);
+    switch (typevalue.first) {
+    case 'l':
+        registers[dest] = typevalue.second;
+    case 't':
+        dataMemory[dest] = typevalue.second;
+        commitLater = WriteMemoryTime;
+    case 'b':
+        if (typevalue.second)
+            pc = dest;
+            flushPipeline();
+        break;
+    case 'c':
+        pc = dest;
+        registers[1] = typevalue.second;
+        flushPipeline();
+        break;
+    case 'r':
+        pc = dest;
+        flushPipeline();
+        break;
+    case 'a':
+        registers[dest] = typevalue.second;
+        break;
+    case 's':
+        registers[dest] = typevalue.second;
+        break;
+    case 'n':
+        registers[dest] = typevalue.second;
+        break;
+    case 'm':
+        registers[dest] = typevalue.second;
+        break;
+    }
+    registers[0] = 0;
+    if(typevalue.first != 's')
+        rob.commit();
+}
+void flushPipeline() {   // For branch misprediction
+    
+
+}
 
 // Phase 6: Statistics / Logging
 
