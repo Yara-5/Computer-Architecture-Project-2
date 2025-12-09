@@ -2,6 +2,11 @@
 #include <vector>
 #include <iostream>
 #include <cstdint>
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
+#include <limits>
+#include <cctype>
 using namespace std;
 
 // ROB entry
@@ -11,6 +16,10 @@ struct ROBEntry {
     int destination;     // register or memory address
     int16_t value;
     bool ready;
+
+    ROBEntry()
+        : busy(false), type(' '), destination(-1), value(0), ready(false) {
+    }
 
     ROBEntry(char typ, int dest, int val) {
         busy = true;
