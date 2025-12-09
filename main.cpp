@@ -1,11 +1,5 @@
 
 #include "ROB.cpp"
-#include <fstream>
-#include <sstream>
-#include <unordered_map>
-#include <limits>
-#include <cctype>
-
 
 
 // Global Constants and Types
@@ -39,7 +33,8 @@ struct RSEntry {
     int Qj, Qk;
     int robIndex;
     int executionCyclesLeft;
-    int16_t address;   // for load/store
+    int16_t address;    // for load/store
+    int instId;             // just for recording purposes
 
     RSEntry(bool b, char o, int16_t vj, int16_t vk, int qj, int qk, int rind, int excl, int16_t add) : busy(b),
         op(o), Vj(vj), Vk(vk), Qj(qj), Qk(qk), robIndex(rind), executionCyclesLeft(excl), address(add) {}
@@ -52,8 +47,12 @@ vector<Instruction> programMemory;         // Instructions
 int16_t dataMemory[MEMORY_SIZE];           // Data memory
 int16_t registers[NUM_REGS];               // Register file
 int regStatus[NUM_REGS];                   // ROB index producing reg (-1 if free)
+vector<vector<int>> records;                // 4 entries                            MUST INITIALIZE WITH ZEROOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+vector<int> commitHistory;
+int branches = 0;
+int mispred = 0;
 
-ROB rob(ROBSize);                                 // Initializing Reorder buffer
+ROB rob(ROBSize);                           // Initializing Reorder buffer
 vector<RSEntry> reservationStations;        // All RS entries
 
 vector<vector<int>> stores(ROBSize);        // 3 values: address, ready?, value         It's used to signify which datamemory items are about to be written to
@@ -64,298 +63,8 @@ int cycle = 0;                              // Global cycle counter
 
 
 // Phase 1: Initialization
-// Remove leading and trailing whitespace
-static inline void trim(string &s) {
-    size_t start = s.find_first_not_of(" \t\r\n");
-    if (start == string::npos) {
-        s.clear();
-        return;
-    }
-    size_t end = s.find_last_not_of(" \t\r\n");
-    s = s.substr(start, end - start + 1);
-}
 
-// Cut off comments starting with '#' or ';'
-static inline string stripComment(const string &line) {
-    size_t pos = line.find_first_of("#;");
-    if (pos == string::npos) return line;
-    return line.substr(0, pos);
-}
-
-// Convert "R0".."R7" or "r0".."r7" to 0..7, return -1 if invalid
-int parseRegister(const string &tok) {
-    if (tok.size() < 2) return -1;
-    if (tok[0] != 'R' && tok[0] != 'r') return -1;
-    int reg = tok[1] - '0';
-    if (reg < 0 || reg >= NUM_REGS) return -1;
-    return reg;
-}
-
-// Split line into tokens; treat ',', '(', ')' as separators
-vector<string> tokenize(const string &line) {
-    string s = line;
-    for (char &c : s) {
-        if (c == ',' || c == '(' || c == ')')
-            c = ' ';
-    }
-    stringstream ss(s);
-    vector<string> tokens;
-    string tok;
-    while (ss >> tok) {
-        tokens.push_back(tok);
-    }
-    return tokens;
-}
-
-void loadProgram() {
-    programMemory.clear();
-
-    cout << "Choose program input method:\n";
-    cout << "1) Enter instructions manually\n";
-    cout << "2) Load instructions from a file\n";
-    int mode;
-    cin >> mode;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n'); // clear newline
-
-    vector<string> rawLines;
-
-    if (mode == 1) {
-        cout << "Enter assembly program, one instruction per line.\n";
-        cout << "End input with an empty line.\n";
-        while (true) {
-            string line;
-            getline(cin, line);
-            if (line.empty()) break;
-            rawLines.push_back(line);
-        }
-    } else {
-        cout << "Enter file path: ";
-        string filename;
-        getline(cin, filename);
-        ifstream fin(filename);
-        if (!fin) {
-            cerr << "Error: could not open file '" << filename << "'.\n";
-            return;
-        }
-        string line;
-        while (getline(fin, line)) {
-            if (!line.empty())
-                rawLines.push_back(line);
-        }
-    }
-
-    // FIRST PASS: label -> instruction index
-    unordered_map<string, int> labelAddr;
-    int currentIndex = 0;   // this will be the instruction index and also inst.pc
-
-    for (string line : rawLines) {
-        line = stripComment(line);
-        trim(line);
-        if (line.empty()) continue;
-
-        string labelPart, instrPart;
-        size_t colonPos = line.find(':');
-        if (colonPos != string::npos) {
-            labelPart = line.substr(0, colonPos);
-            instrPart = line.substr(colonPos + 1);
-            trim(labelPart);
-            trim(instrPart);
-            if (!labelPart.empty()) {
-                labelAddr[labelPart] = currentIndex;
-            }
-        } else {
-            instrPart = line;
-        }
-
-        trim(instrPart);
-        if (!instrPart.empty()) {
-            currentIndex++;  // count one instruction
-        }
-    }
-
-    // SECOND PASS: parse instructions into programMemory
-    currentIndex = 0;
-
-    for (string line : rawLines) {
-        line = stripComment(line);
-        trim(line);
-        if (line.empty()) continue;
-
-        // Remove label if present
-        size_t colonPos = line.find(':');
-        if (colonPos != string::npos) {
-            string instrPart = line.substr(colonPos + 1);
-            line = instrPart;
-            trim(line);
-            if (line.empty()) continue; // label-only line
-        }
-
-        vector<string> tokens = tokenize(line);
-        if (tokens.empty()) continue;
-
-        string op = tokens[0];
-        for (char &c : op) c = toupper(c);
-
-        Instruction inst{};
-        inst.pc   = currentIndex;  // use instruction index as PC for your simulator
-        inst.dst  = -1;
-        inst.src1 = -1;
-        inst.src2 = -1;
-        inst.imm  = 0;
-
-        if (op == "LOAD") {
-            // LOAD rA, offset(rB) → tokens: LOAD R?, offset, R?
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in LOAD: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]);
-            int off = stoi(tokens[2]);
-            int rB = parseRegister(tokens[3]);
-            inst.opcode = 'l';
-            inst.dst    = rA;
-            inst.src1   = rB;        // base register
-            inst.imm    = (int16_t)off;
-
-        } else if (op == "STORE") {
-            // STORE rA, offset(rB)
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in STORE: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]); // value
-            int off = stoi(tokens[2]);
-            int rB = parseRegister(tokens[3]); // base
-            inst.opcode = 't';
-            inst.dst    = -1;        // store does not write a register
-            inst.src1   = rA;        // value
-            inst.src2   = rB;        // base
-            inst.imm    = (int16_t)off;
-
-        } else if (op == "BEQ") {
-            // BEQ rA, rB, offset_or_label
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in BEQ: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]);
-            int rB = parseRegister(tokens[2]);
-            inst.opcode = 'b';
-            inst.dst    = -1;
-            inst.src1   = rA;
-            inst.src2   = rB;
-
-            const string &third = tokens[3];
-            bool isNumber = !third.empty() &&
-                            (isdigit(third[0]) || third[0] == '-' || third[0] == '+');
-            int offset;
-            if (isNumber) {
-                // literal offset (from PC+1)
-                offset = stoi(third);
-            } else {
-                // label: offset = labelIndex - (currentIndex+1)
-                auto it = labelAddr.find(third);
-                if (it == labelAddr.end()) {
-                    cerr << "Unknown label in BEQ: " << third << " in line: " << line << "\n";
-                    offset = 0;
-                } else {
-                    offset = it->second - (currentIndex + 1);
-                }
-            }
-            inst.imm = (int16_t)offset;
-
-        } else if (op == "CALL") {
-            // CALL label
-            if (tokens.size() != 2) {
-                cerr << "Syntax error in CALL: " << line << "\n";
-                continue;
-            }
-            inst.opcode = 'c';
-            inst.dst    = 1;  // R1 holds return address
-
-            const string &label = tokens[1];
-            auto it = labelAddr.find(label);
-            int targetIndex;
-            if (it == labelAddr.end()) {
-                cerr << "Unknown label in CALL: " << label << " in line: " << line << "\n";
-                targetIndex = currentIndex;   // fallback
-            } else {
-                targetIndex = it->second;
-            }
-            // You use inst.pc + inst.imm as the target → imm = targetIndex - inst.pc
-            inst.imm = (int16_t)(targetIndex - inst.pc);
-
-        } else if (op == "RET") {
-            // RET
-            inst.opcode = 'r';
-            inst.dst    = -1;
-            inst.src1   = 1;   // R1 contains return address
-
-        } else if (op == "ADD") {
-            // ADD rA, rB, rC
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in ADD: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]);
-            int rB = parseRegister(tokens[2]);
-            int rC = parseRegister(tokens[3]);
-            inst.opcode = 'a';
-            inst.dst    = rA;
-            inst.src1   = rB;
-            inst.src2   = rC;
-
-        } else if (op == "SUB") {
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in SUB: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]);
-            int rB = parseRegister(tokens[2]);
-            int rC = parseRegister(tokens[3]);
-            inst.opcode = 's';
-            inst.dst    = rA;
-            inst.src1   = rB;
-            inst.src2   = rC;
-
-        } else if (op == "NAND") {
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in NAND: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]);
-            int rB = parseRegister(tokens[2]);
-            int rC = parseRegister(tokens[3]);
-            inst.opcode = 'n';
-            inst.dst    = rA;
-            inst.src1   = rB;
-            inst.src2   = rC;
-
-        } else if (op == "MUL") {
-            if (tokens.size() != 4) {
-                cerr << "Syntax error in MUL: " << line << "\n";
-                continue;
-            }
-            int rA = parseRegister(tokens[1]);
-            int rB = parseRegister(tokens[2]);
-            int rC = parseRegister(tokens[3]);
-            inst.opcode = 'm';
-            inst.dst    = rA;
-            inst.src1   = rB;
-            inst.src2   = rC;
-
-        } else {
-            cerr << "Unknown opcode: " << op << " in line: " << line << "\n";
-            continue;
-        }
-
-        programMemory.push_back(inst);
-        currentIndex++;
-    }
-
-    // Start simulation from first instruction
-    pc = 0;
-}
+void loadProgram();                           // Load instructions into programMemory
 
 void initRegisters() {                        // Initialize registers and regStatus
     registers[0] = 0;
@@ -557,20 +266,19 @@ bool canLoad(int robId, int address, int& val, bool& other) {
     }
 }
 
-//void startExecutionForReadyRS();
-
 void decrementExecutionTimers() {
     for (auto rs : reservationStations) {
         if (rs.busy && rs.executionCyclesLeft > 0 && rs.Qj == -1 && rs.Qk == -1) {
+            recordExecStart(rs.instId);
             rs.executionCyclesLeft--;
         }
         if (rs.op == 'l' && rs.executionCyclesLeft == 0 && rs.Qk != -2) {
             bool other = false;
             int val;
             if (!canLoad(rs.robIndex, rs.address + rs.Vj, val, other))
-                rs.executionCyclesLeft = 1;                 // wait another cycle
+                rs.executionCyclesLeft = 1;                  // wait another cycle
             else {
-                if (other) {                                   // USE THE EMPTY Qk AND Vk TO GET THINGS FROM STORES
+                if (other) {                               // USE THE EMPTY Qk AND Vk TO GET THINGS FROM STORES
                     rs.Vk = val;
                     rs.Qk = -2;
                 }
@@ -582,6 +290,8 @@ void decrementExecutionTimers() {
                 }
             }
         }
+        if (rs.executionCyclesLeft == 0)
+            recordExecStart(rs.instId);
     }
 }
 
@@ -602,11 +312,7 @@ void writeBackResults() {
     int16_t value = -1;
     switch (reservationStations[index].op) {
     case 'l':
-        if (reservationStations[index].Qk == -2) {
-            value = reservationStations[index].Vk;
-        }
-        else
-            value = reservationStations[index].address + reservationStations[index].Vj;
+        value = reservationStations[index].Vk;
         break;
     case 't':
         value = reservationStations[index].Vk;
@@ -653,6 +359,7 @@ void writeBackResults() {
     rob.markReady(reservationStations[index].robIndex, value);
     if (reservationStations[index].op != 's')
         reservationStations[index].busy = false;
+    recordWrite(reservationStations[index].instId);
 }
 
 
@@ -715,7 +422,7 @@ void commitInstruction() {
         rob.commit();
 }
 
-void flushPipeline() {   // For branch misprediction
+void flushPipeline() {          // For branch misprediction
     for (auto rs : reservationStations) {
         rs.busy = false;
     }
@@ -724,11 +431,27 @@ void flushPipeline() {   // For branch misprediction
 
 // Phase 6: Statistics / Logging
 
-void recordIssue(int instID);
-void recordExecStart(int instID);
-void recordExecEnd(int instID);
-void recordWrite(int instID);
-void recordCommit(int instID);
+void recordIssue(int instID) {
+    records[instID][0] = cycle;
+}
+
+void recordExecStart(int instID) {
+    if(records[instID][1] == 0)
+        records[instID][1] = cycle;
+}
+
+void recordExecEnd(int instID) {
+    if (records[instID][2] == 0)
+        records[instID][2] = cycle;
+}
+
+void recordWrite(int instID) {
+    records[instID][3] = cycle;
+}
+
+void recordCommit() {
+    commitHistory.push_back(cycle);
+}
 void printResults();
 
 
