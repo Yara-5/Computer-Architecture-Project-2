@@ -123,6 +123,8 @@ public:
     }
 
     void commit() {
+        if (isEmpty())
+            return;
         entries[head].busy = false;
         if (count == 1) {
             head = 0;
@@ -133,8 +135,8 @@ public:
         count--;
     }
 
-    void flushAfter(int branchIndex) {
-        while (tail != branchIndex)
+    void flushAfter() {
+        while (tail != head)
         {
             count--;
             tail = (tail - 1) % size;
@@ -142,15 +144,15 @@ public:
         }
     }
 
-    int compare(int i1, int i2) {
-        int index = head;
-        while (index != tail) {
-            if (index == i1)
-                return i1;
-            if (index == i2)
-                return i2;
-        }
-        return -1;
-    }
+    //int compare(int i1, int i2) {
+    //    int index = head;
+    //    while (index != tail) {
+    //        if (index == i1)
+    //            return i1;
+    //        if (index == i2)
+    //            return i2;
+    //    }
+    //    return -1;
+    //}
 
 };
