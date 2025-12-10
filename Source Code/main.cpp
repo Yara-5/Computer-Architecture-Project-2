@@ -74,6 +74,7 @@ vector<vector<int>> stores(ROBSize);        // 3 values: address, ready?, value 
 
 int pc = 0;                                 // Program counter
 int pcStart = 0;
+int dynamicCount = 0;
 int cycle = 0;                              // Global cycle counter
 
 
@@ -384,6 +385,7 @@ void loadProgram() {                            // load program to memory
 
     cout << "At what address does your program start?\n";
     cin >> pcStart;
+    pcStart = pcStart % MEMORY_SIZE;
 
     int acc = 0;
     for (int i = 0; i < 7; i++)
@@ -456,7 +458,7 @@ void initMemory() {                           // Initialize dataMemory
         cout << "Enter the data you want to enter at address " << address << ": ";
         cin >> data;
         dataMemory[address] = data;
-        cout << "\nDo you want to enter more data?\n If yes, press 1, else press 0\n";
+        cout << "\nDo you want to enter more data?\nIf yes, press 1, else press 0\n";
         cin >> ans;
     }
     cout << "\nThe program will start running now.\n";
@@ -648,6 +650,7 @@ void issueInstruction(const Instruction& inst) {
     }
     regStatus[0] = -1;
     pc++;
+    dynamicCount++;
 }
 
 
@@ -827,9 +830,11 @@ void commitInstruction() {
         commitLater = WriteMemoryTime - 1;
         break;
     case 'b':
+        branches++;
         if (typevalue.second) {
             pc = dest;
             flushPipeline();
+            mispred++;
         }
         break;
     case 'c':
@@ -878,6 +883,9 @@ void printResults() {
         }
         cout << endl;
     }
+    cout << "\n2. The total number of cycles the program took is: " << --cycle << endl;
+    cout << "3. The IPC is: " << static_cast<double>(dynamicCount) / cycle << ", the CPI is: " << static_cast<double>(cycle) / dynamicCount << endl;
+    cout << "4. The branch misprediction percentage is: " << mispred * 100 / (branches > 0 ? branches : 1) << "%\n";
 }
 
 
