@@ -16,17 +16,19 @@ struct ROBEntry {
     int destination;     // register or memory address
     int16_t value;
     bool ready;
+    int instId;         // just to record commit time of certain instruction
 
     ROBEntry()
-        : busy(false), type(' '), destination(-1), value(0), ready(false) {
+        : busy(false), type(' '), destination(-1), value(0), ready(false), instId(-1) {
     }
 
-    ROBEntry(char typ, int dest, int val) {
+    ROBEntry(char typ, int dest, int val, int pc) {
         busy = true;
         type = typ;
         destination = dest;
         value = val;
         ready = false;
+        instId = pc;
     }
 };
 
@@ -56,13 +58,13 @@ public:
         return (count == 0);
     }
 
-    int allocate(char type, int dest) {
+    int allocate(char type, int dest, int pc) {
         if (isFull()) {
             cout << "Error: ROB is full, can't allocate\n";
             return -1;
         }
 
-        entries[tail] = ROBEntry(type, dest, 0);
+        entries[tail] = ROBEntry(type, dest, 0, pc);
         int index = tail;
         tail = (tail + 1) % size;
         count++;
@@ -72,7 +74,7 @@ public:
     bool findVal(int dest, int16_t& value) {
         int index = tail;
         do {
-            index = (index - 1) % size;
+            index = (index + size - 1) % size;
             if (entries[index].ready && entries[index].type != 's' && entries[index].destination == dest) {
                 value = entries[index].value;
                 return true;
@@ -101,13 +103,11 @@ public:
 
     int getFirst(vector<int> ready) {
         vector<bool> val(size, false);
-        for (auto rd : ready)
-            if (rd >= 0)
-                val[rd] = true;
+        for (int i=0;i<ready.size();i++)
+            if (ready[i] >= 0)
+                val[ready[i]] = true;
         int index = head;
-        while (index != tail) {
-            if (val[index])
-                break;
+        while (!val[index]) {
             index = (index + 1) % size;
         }
         int i = 0;
@@ -119,7 +119,7 @@ public:
     int chooseStore(vector<bool> ready, int l) {
         int index = l;
         while (index != head) {
-            index = (index - 1) % size;
+            index = (index + size - 1) % size;
             if (ready[index])
                 return index;
         }
@@ -144,11 +144,15 @@ public:
         count--;
     }
 
+    int getPC() {
+        return entries[head].instId;
+    }
+
     void flushAfter() {
         while (tail != head)
         {
             count--;
-            tail = (tail - 1) % size;
+            tail = (tail + size - 1) % size;
             entries[tail].busy = false;
         }
     }

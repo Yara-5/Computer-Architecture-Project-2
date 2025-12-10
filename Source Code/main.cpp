@@ -61,8 +61,8 @@ vector<Instruction> programMemory;         // Instructions
 int16_t dataMemory[MEMORY_SIZE];           // Data memory
 int16_t registers[NUM_REGS];               // Register file
 int regStatus[NUM_REGS];                   // ROB index producing reg (-1 if free)
-vector<vector<int>> records;                // 4 entries                            MUST INITIALIZE WITH ZEROOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-vector<int> commitHistory;
+vector<vector<int>> records;                // 6 entries (pc, issue time, startExc, EndExec, write back, commit)
+//vector<int> commitHistory;
 int branches = 0;
 int mispred = 0;
 
@@ -381,7 +381,8 @@ void loadProgram() {                            // load program to memory
         currentIndex++;
     }
 
-    records.resize(programMemory.size(), { 0,0,0,0 });
+    //records.resize(programMemory.size(), { -1,-1,-1,-1 });
+    //commitHistory.resize(programMemory.size(), -1);
     int acc = 0;
     for (int i = 0; i < 7; i++)
     {
@@ -422,26 +423,27 @@ void initReservationStations() {              // Initialize all RS entries
 }
 
 
-void recordIssue(int instID) {
-    records[instID][0] = cycle;
+int recordIssue(int instID) {
+    records.push_back({ instID,cycle });
+    return records.size() - 1;
 }
 
 void recordExecStart(int instID) {
-    if (records[instID][1] == 0)
-        records[instID][1] = cycle;
+    if (records[instID].size() == 2)
+        records[instID].push_back(cycle);
 }
 
 void recordExecEnd(int instID) {
-    if (records[instID][2] == 0)
-        records[instID][2] = cycle;
+    if (records[instID].size() == 3)
+        records[instID].push_back(cycle);
 }
 
 void recordWrite(int instID) {
-    records[instID][3] = cycle;
+    records[instID].push_back(cycle);
 }
 
-void recordCommit() {
-    commitHistory.push_back(cycle);
+void recordCommit(int instId) {
+    records[instId].push_back(cycle);
 }
 
 
@@ -551,7 +553,8 @@ void issueInstruction(const Instruction& inst) {
         //pc++;
         return;
     }
-    int rbInd = rob.allocate(inst.opcode, inst.dst);
+    int j = recordIssue(pc);
+    int rbInd = rob.allocate(inst.opcode, inst.dst, j);
     int16_t val1 = -1, val2 = -1;
     if (inst.src1 >= 0 && !rob.findVal(inst.src1, val1))
         val1 = registers[inst.src1];
@@ -559,44 +562,43 @@ void issueInstruction(const Instruction& inst) {
         val2 = registers[inst.src2];
     switch (inst.opcode) {
     case 'l':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], -1, rbInd, cycles_num[0], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], -1, rbInd, cycles_num[0], inst.imm, j);
         regStatus[inst.dst] = ind;
         break;
     case 't':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[1], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[1], inst.imm, j);
         stores[rbInd][0] = -2;
         break;
     case 'b':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[2], inst.pc + inst.imm + 1, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[2], inst.pc + inst.imm, j);
         break;
     case 'c':
-        reservationStations[ind] = RSEntry(true, inst.opcode, pc, val2, -1, -1, rbInd, cycles_num[3], inst.pc + inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, pc, val2, -1, -1, rbInd, cycles_num[3], inst.pc + inst.imm, j);
         regStatus[inst.dst] = ind;
         break;
     case 'r':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], -1, rbInd, cycles_num[3], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], -1, rbInd, cycles_num[3], inst.imm, j);
         break;
     case 'a':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[4], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[4], inst.imm, j);
         regStatus[inst.dst] = ind;
         break;
     case 's':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[4], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[4], inst.imm, j);
         regStatus[inst.dst] = ind;
         break;
     case 'n':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[5], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[5], inst.imm, j);
         regStatus[inst.dst] = ind;
         break;
     case 'm':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[6], inst.imm, pc);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[6], inst.imm, j);
         regStatus[inst.dst] = ind;
         break;
     default:
         cout << "Undefined Instruction\n";
     }
     regStatus[0] = 0;
-    recordIssue(pc);
     pc++;
 }
 
@@ -686,6 +688,7 @@ void writeBackResults() {
         stores[reservationStations[index].robIndex][1] = 1;
         stores[reservationStations[index].robIndex][2] = value;
         rob.changeDest(reservationStations[index].robIndex, stores[reservationStations[index].robIndex][0]);
+        break;
     case 'b':
         value = (reservationStations[index].Vj == reservationStations[index].Vk);
         rob.changeDest(reservationStations[index].robIndex, reservationStations[index].address);
@@ -725,6 +728,10 @@ void writeBackResults() {
     rob.markReady(reservationStations[index].robIndex, value);
     if (reservationStations[index].op != 't')
         reservationStations[index].busy = false;
+    else{ 
+        reservationStations[index].Qj = index;             // To pevent it from writing back again
+        reservationStations[index].executionCyclesLeft = cycles_num[1];
+    }
     recordWrite(reservationStations[index].instId);
 }
 
@@ -752,7 +759,10 @@ void commitInstruction() {
         for (int i = 0; i < TotalReserveStations; i++)
             if (reservationStations[i].robIndex == dest)
                 reservationStations[i].busy = false;
+        recordCommit(rob.getPC());
         rob.commit();
+        commitLater--;
+        return;
     }
     commitLater = -1;
     pair<int, int> typevalue;
@@ -763,7 +773,8 @@ void commitInstruction() {
         break;
     case 't':
         dataMemory[dest] = typevalue.second;
-        commitLater = WriteMemoryTime;
+        commitLater = WriteMemoryTime - 1;
+        break;
     case 'b':
         if (typevalue.second)
             pc = dest;
@@ -792,9 +803,10 @@ void commitInstruction() {
         break;
     }
     registers[0] = 0;
-    if(typevalue.first != 't')
+    if (typevalue.first != 't') {
+        recordCommit(rob.getPC());
         rob.commit();
-    recordCommit();
+    }
 }
 
 
@@ -803,8 +815,15 @@ void commitInstruction() {
 
 
 void printResults() {
+    cout << "pc,  issue time, execution start time, execution end time, write back time, commit time\n";
     for (int i = 0; i < records.size(); i++) {
-        cout << i << ": " << records[i][0] << " " << records[i][1] << " " << records[i][2] << " " << records[i][3] << " " << commitHistory[i] << endl;
+        for (int j = 0; j < 6; j++) {
+            if (j >= records[i].size())
+                cout << "- 1  ";
+            else
+                cout << records[i][j] << "  ";
+        }
+        cout << endl;
     }
 }
 
