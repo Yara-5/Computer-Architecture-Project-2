@@ -24,7 +24,7 @@ int reserve_start[7];
 int cycles_num[] = { 2,2,1,1,2,1,12 };
 int ReadMemoryTime = 4;
 int WriteMemoryTime = 4;
-int TotalReserveStations;
+int TotalReserveStations = 13;
 int ROBSize = 8;
 
 struct Instruction {
@@ -46,6 +46,9 @@ struct RSEntry {
     int16_t address;    // for load/store
     int instId;             // just for recording purposes
 
+    RSEntry():
+        busy(false) {}
+    
     RSEntry(bool b, char o, int16_t vj, int16_t vk, int qj, int qk, int rind, int excl, int16_t add, int instid) : busy(b),
         op(o), Vj(vj), Vk(vk), Qj(qj), Qk(qk), robIndex(rind), executionCyclesLeft(excl), address(add), instId(instid) {
     }
@@ -147,7 +150,7 @@ void loadProgram() {                            // load program to memory
         ifstream fin(filename);
         if (!fin) {
             cerr << "Error: could not open file '" << filename << "'.\n";
-            return;
+            exit(1);
         }
         string line;
         while (getline(fin, line)) {
@@ -380,7 +383,7 @@ void loadProgram() {                            // load program to memory
 
     records.resize(programMemory.size(), { 0,0,0,0 });
     int acc = 0;
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 7; i++)
     {
         reserve_start[i] = acc;
         acc += reserve_num[i];
@@ -413,6 +416,7 @@ void initMemory() {                           // Initialize dataMemory
 }
 
 void initReservationStations() {              // Initialize all RS entries
+    reservationStations.resize(TotalReserveStations);
     for (auto &rs : reservationStations)
         rs.busy = false;
 }
@@ -543,8 +547,10 @@ bool canIssue(const Instruction& inst, int& i) {
 
 void issueInstruction(const Instruction& inst) {
     int ind;
-    if (!canIssue(inst, ind))
+    if (!canIssue(inst, ind)) {
+        //pc++;
         return;
+    }
     int rbInd = rob.allocate(inst.opcode, inst.dst);
     int16_t val1 = -1, val2 = -1;
     if (inst.src1 >= 0 && !rob.findVal(inst.src1, val1))
@@ -616,31 +622,33 @@ bool canLoad(int robId, int address, int& val, bool& other) {
 }
 
 void decrementExecutionTimers() {
-    for (auto &rs : reservationStations) {
-        if (rs.busy && rs.executionCyclesLeft > 0 && rs.Qj == -1 && rs.Qk == -1) {
-            recordExecStart(rs.instId);
-            rs.executionCyclesLeft--;
-        }
-        if (rs.op == 'l' && rs.executionCyclesLeft == 0 && rs.Qk != -2) {
-            bool other = false;
-            int val;
-            if (!canLoad(rs.robIndex, rs.address + rs.Vj, val, other))
-                rs.executionCyclesLeft = 1;                  // wait another cycle
-            else {
-                if (other) {                               // USE THE EMPTY Qk AND Vk TO GET THINGS FROM STORES
-                    rs.Vk = val;
-                    rs.Qk = -2;
-                }
-                else
-                {
-                    rs.executionCyclesLeft = ReadMemoryTime;
-                    rs.Vk = dataMemory[rs.Vj];
-                    rs.Qk = -2;
+    for (auto& rs : reservationStations) {
+        if (rs.busy) {
+            if (rs.executionCyclesLeft > 0 && rs.Qj == -1 && (rs.Qk == -1 || rs.Qk == -2)) {
+                recordExecStart(rs.instId);
+                rs.executionCyclesLeft--;
+            }
+            if (rs.op == 'l' && rs.executionCyclesLeft == 0 && rs.Qk != -2) {
+                bool other = false;
+                int val;
+                if (!canLoad(rs.robIndex, rs.address + rs.Vj, val, other))
+                    rs.executionCyclesLeft = 1;                  // wait another cycle
+                else {
+                    if (other) {                               // USE THE EMPTY Qk AND Vk TO GET THINGS FROM STORES
+                        rs.Vk = val;
+                        rs.Qk = -2;
+                    }
+                    else
+                    {
+                        rs.executionCyclesLeft = ReadMemoryTime;
+                        rs.Vk = dataMemory[rs.Vj];
+                        rs.Qk = -2;
+                    }
                 }
             }
+            if (rs.executionCyclesLeft == 0)
+                recordExecEnd(rs.instId);
         }
-        if (rs.executionCyclesLeft == 0)
-            recordExecStart(rs.instId);
     }
 }
 
@@ -649,10 +657,17 @@ void decrementExecutionTimers() {
 
 void writeBackResults() {
     vector<int> ready(TotalReserveStations, -1);
-    for (int i = 0; i < TotalReserveStations;i++) {
+    bool done = true;
+    for (int i = 0; i < TotalReserveStations; i++) {
         if (reservationStations[i].busy && reservationStations[i].executionCyclesLeft == 0)
+        {
             ready[i] = reservationStations[i].robIndex;
+            done = false;
+        }
     }
+    if (done)
+        return;
+
     int index = rob.getFirst(ready);
     for (int i=0;i<NUM_REGS;i++)
         if (regStatus[i] == index) {
@@ -708,7 +723,7 @@ void writeBackResults() {
         }
     }
     rob.markReady(reservationStations[index].robIndex, value);
-    if (reservationStations[index].op != 's')
+    if (reservationStations[index].op != 't')
         reservationStations[index].busy = false;
     recordWrite(reservationStations[index].instId);
 }
@@ -777,8 +792,9 @@ void commitInstruction() {
         break;
     }
     registers[0] = 0;
-    if(typevalue.first != 's')
+    if(typevalue.first != 't')
         rob.commit();
+    recordCommit();
 }
 
 
@@ -788,7 +804,7 @@ void commitInstruction() {
 
 void printResults() {
     for (int i = 0; i < records.size(); i++) {
-        cout << i << " " << records[i][0] << " " << records[i][1] << " " << records[i][2] << " " << records[i][3] << " " << commitHistory[i] << endl;
+        cout << i << ": " << records[i][0] << " " << records[i][1] << " " << records[i][2] << " " << records[i][3] << " " << commitHistory[i] << endl;
     }
 }
 
@@ -796,10 +812,9 @@ void printResults() {
 // Phase 7: Simulator Loop
 
 void runSimulator() {
-    while (!rob.isEmpty()) {
+    while (!rob.isEmpty() || pc<programMemory.size()) {
         commitInstruction();
         writeBackResults();
-        //startExecutionForReadyRS();
         decrementExecutionTimers();
         if (pc<programMemory.size())
             issueInstruction(programMemory[pc]);
