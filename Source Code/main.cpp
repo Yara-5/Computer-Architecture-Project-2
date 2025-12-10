@@ -73,6 +73,7 @@ vector<vector<int>> stores(ROBSize);        // 3 values: address, ready?, value 
 
 
 int pc = 0;                                 // Program counter
+int pcStart = 0;
 int cycle = 0;                              // Global cycle counter
 
 
@@ -381,20 +382,67 @@ void loadProgram() {                            // load program to memory
         currentIndex++;
     }
 
-    //records.resize(programMemory.size(), { -1,-1,-1,-1 });
-    //commitHistory.resize(programMemory.size(), -1);
+    cout << "At what address does your program start?\n";
+    cin >> pcStart;
+
     int acc = 0;
     for (int i = 0; i < 7; i++)
     {
         reserve_start[i] = acc;
         acc += reserve_num[i];
     }
+    TotalReserveStations = acc;
 }               
+
+void chooseVariables() {
+    cout << "Do you want to change the number of ROB entries, the number of reservation stations and the number of cycles for each instruction type?\n";
+    cout << "If so, press 1, otherwise press 0 and the default values will be used\n";
+    int ans;
+    cin >> ans;
+    if (ans) {
+        cout << "Enter the number of ROB entries\n";
+        cin >> ROBSize;
+        cout << "Enter the number of cycles taken for memory read: ";
+        cin >> ReadMemoryTime;
+        cout << "Enter the number of cycles taken for memory write: ";
+        cin >> WriteMemoryTime;
+        cout << "Enter the number of reservation stations for load: ";
+        cin >> reserve_num[0];
+        cout << "Enter the number of cycles taken for load: ";
+        cin >> cycles_num[0];
+        cout << "Enter the number of reservation stations for store: ";
+        cin >> reserve_num[1];
+        cout << "Enter the number of cycles taken for store: ";
+        cin >> cycles_num[1];
+        cout << "Enter the number of reservation stations for beq: ";
+        cin >> reserve_num[2];
+        cout << "Enter the number of cycles taken for beq: ";
+        cin >> cycles_num[2];
+        cout << "Enter the number of reservation stations for call/ret: ";
+        cin >> reserve_num[3];
+        cout << "Enter the number of cycles taken for call/ret: ";
+        cin >> cycles_num[3];
+        cout << "Enter the number of reservation stations for add/sub: ";
+        cin >> reserve_num[4];
+        cout << "Enter the number of cycles taken for add/sub: ";
+        cin >> cycles_num[4];
+        cout << "Enter the number of reservation stations for nand: ";
+        cin >> reserve_num[5];
+        cout << "Enter the number of cycles taken for nand: ";
+        cin >> cycles_num[5];
+        cout << "Enter the number of reservation stations for mul: ";
+        cin >> reserve_num[6];
+        cout << "Enter the number of cycles taken for mul: ";
+        cin >> cycles_num[6];
+    }
+}
 
 void initRegisters() {                        // Initialize registers and regStatus
     registers[0] = 0;
-    for (int i = 0; i < NUM_REGS; i++)
+    for (int i = 0; i < NUM_REGS; i++) {
+        registers[i] = 0;
         regStatus[i] = -1;
+    }
 }
 
 void initMemory() {                           // Initialize dataMemory
@@ -570,7 +618,7 @@ void issueInstruction(const Instruction& inst) {
         stores[rbInd][0] = -2;
         break;
     case 'b':
-        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[2], inst.pc + inst.imm, j);
+        reservationStations[ind] = RSEntry(true, inst.opcode, val1, val2, regStatus[inst.src1], regStatus[inst.src2], rbInd, cycles_num[2], inst.pc + inst.imm + 1, j);
         break;
     case 'c':
         reservationStations[ind] = RSEntry(true, inst.opcode, pc, val2, -1, -1, rbInd, cycles_num[3], inst.pc + inst.imm, j);
@@ -598,7 +646,7 @@ void issueInstruction(const Instruction& inst) {
     default:
         cout << "Undefined Instruction\n";
     }
-    regStatus[0] = 0;
+    regStatus[0] = -1;
     pc++;
 }
 
@@ -643,7 +691,7 @@ void decrementExecutionTimers() {
                     else
                     {
                         rs.executionCyclesLeft = ReadMemoryTime;
-                        rs.Vk = dataMemory[rs.Vj];
+                        rs.Vk = dataMemory[rs.Vj + rs.address];
                         rs.Qk = -2;
                     }
                 }
@@ -659,7 +707,7 @@ void decrementExecutionTimers() {
 
 void writeBackResults() {
     vector<int> ready(TotalReserveStations, -1);
-    bool done = true;
+    int  done = true;
     for (int i = 0; i < TotalReserveStations; i++) {
         if (reservationStations[i].busy && reservationStations[i].executionCyclesLeft == 0)
         {
@@ -745,6 +793,9 @@ void flushPipeline() {          // For branch misprediction
     for (auto& rs : reservationStations) {
         rs.busy = false;
     }
+    for (int i = 0; i < NUM_REGS; i++) {
+        regStatus[i] = -1;
+    }
     rob.flushAfter();
 }
 
@@ -776,9 +827,10 @@ void commitInstruction() {
         commitLater = WriteMemoryTime - 1;
         break;
     case 'b':
-        if (typevalue.second)
+        if (typevalue.second) {
             pc = dest;
             flushPipeline();
+        }
         break;
     case 'c':
         pc = dest;
@@ -815,9 +867,10 @@ void commitInstruction() {
 
 
 void printResults() {
-    cout << "pc,  issue time, execution start time, execution end time, write back time, commit time\n";
+    cout << "pc:  issue time, execution start time, execution end time, write back time, commit time\n";
     for (int i = 0; i < records.size(); i++) {
-        for (int j = 0; j < 6; j++) {
+        cout << records[i][0] + pcStart << ": ";
+        for (int j = 1; j < 6; j++) {
             if (j >= records[i].size())
                 cout << "- 1  ";
             else
@@ -847,6 +900,7 @@ void runSimulator() {
 // Main
 
 int main() {
+    chooseVariables();
     loadProgram();
     initRegisters();
     initMemory();

@@ -103,11 +103,18 @@ public:
 
     int getFirst(vector<int> ready) {
         vector<bool> val(size, false);
+        int options = 0, index;
         for (int i=0;i<ready.size();i++)
-            if (ready[i] >= 0)
+            if (ready[i] >= 0) {
                 val[ready[i]] = true;
-        int index = head;
-        while (!val[index]) {
+                index = i;
+                options++;
+            }
+        if (options == 1) {
+            return index;
+        }
+        index = head;
+        while (!val[index]) {                   // I WAS FIXING HERE
             index = (index + 1) % size;
         }
         int i = 0;

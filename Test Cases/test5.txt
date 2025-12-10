@@ -1,0 +1,13 @@
+LOAD R1, 100(R0)    # R1 <- M (Base)
+LOAD R2, 101(R0)    # R2 <- N (Exponent/Counter)
+LOAD R4, 1(R0)      # R4 <- 1 (Constant 1)
+ADD R3, R4, R0      # R3 <- 1 (Result is initialized to 1)
+
+loop:
+BEQ R2, R0, done    # If R2 (Counter) == 0, jump to 'done'
+MUL R3, R3, R1      # R3 <- R3 * R1 (Result * Base)
+SUB R2, R2, R4      # R2 <- R2 - 1 (Decrement counter)
+BEQ R0, R0, loop    # Unconditional jump back to 'loop'
+
+done:
+STORE R3, 102(R0)   # Store R3 (Result) to M[102]
